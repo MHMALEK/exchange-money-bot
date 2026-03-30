@@ -1,5 +1,6 @@
 from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,10 +20,11 @@ class Settings(BaseSettings):
         "شما گزینهٔ «فروش ارز و دریافت ریال» را انتخاب کردید. "
         "به‌زودی ادامهٔ فرآیند را اینجا اضافه می‌کنیم."
     )
-    start_button_2_reply: str = (
-        "شما گزینهٔ «خرید ارز و پرداخت ریال» را انتخاب کردید. "
-        "به‌زودی ادامهٔ فرآیند را اینجا اضافه می‌کنیم."
-    )
+    # Buyer flow shows the live offer list in the bot; this env override is unused.
+    start_button_2_reply: str = ""
+
+    buyer_catalog_page_size: int = Field(default=20, ge=1, le=30)
+    """Offers per catalog page. Telegram allows ~100 inline buttons; 20 rows + nav + back stays safe."""
 
 
 settings = Settings()
