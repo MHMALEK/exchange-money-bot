@@ -26,5 +26,15 @@ class Settings(BaseSettings):
     buyer_catalog_page_size: int = Field(default=20, ge=1, le=30)
     """Offers per catalog page. Telegram allows ~100 inline buttons; 20 rows + nav + back stays safe."""
 
+    buyer_show_irr_rates: bool = True
+    """Show approximate USD/EUR to IRR on buyer screens (fetched from public JSON)."""
+
+    buyer_irr_rates_ttl_seconds: int = Field(default=120, ge=30, le=3600)
+    """Cache TTL for fiat IRR snapshot (seconds)."""
+
+    buyer_irr_rates_usd_json_url: Optional[str] = None
+    buyer_irr_rates_eur_json_url: Optional[str] = None
+    """Override JSON URLs; defaults use margani/pricedb GitHub raw (tgju)."""
+
 
 settings = Settings()

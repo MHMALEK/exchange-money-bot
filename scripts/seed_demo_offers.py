@@ -1,14 +1,14 @@
-"""کاربران و آگهی‌های تست برای فهرست خرید (telegram_idهای ساختگی).
+"""Seed demo users and sell offers for the buyer catalog (synthetic telegram_id values).
 
-فقط از sqlite استاندارد استفاده می‌کند (بدون aiosqlite).
+Uses stdlib sqlite3 only (no aiosqlite).
 
-اجرا از ریشهٔ پروژه:
+Run from project root:
   python scripts/seed_demo_offers.py
 
-مسیر دیتابیس: متغیر SEED_SQLITE_PATH یا مقدار پیش‌فرض data/app.db
-(اگر از .env مقدار DATABASE_URL=sqlite+aiosqlite:///./data/app.db دارید، همان data/app.db است.)
+Database path: SEED_SQLITE_PATH env var, or default data/app.db
+(with DATABASE_URL=sqlite+aiosqlite:///./data/app.db in .env, that is the same data/app.db).
 
-هر بار اجرا، کاربران دمو و آگهی‌هایشان را پاک و دوباره می‌سازد.
+Each run deletes and recreates the demo users and their offers.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# telegram_idهای تست
-DEMO_IDS = (8123456001, 8123456002, 8123456003)
+# Synthetic telegram_ids for demo rows
+DEMO_IDS = (8123456001, 8123456002)
 
 DEMO_ROWS: list[tuple[int, str | None, str, list[tuple[int, str]]]] = [
     (
@@ -35,12 +35,6 @@ DEMO_ROWS: list[tuple[int, str | None, str, list[tuple[int, str]]]] = [
         "demo_seller_eur",
         "فروشندهٔ تست یورو",
         [(300, "EUR"), (750, "EUR")],
-    ),
-    (
-        8123456003,
-        None,
-        "فروشندهٔ تست تتر",
-        [(1000, "USDT"), (5000, "USDT"), (200, "USDT")],
     ),
 ]
 

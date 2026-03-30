@@ -5,11 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from exchange_money_bot.models import SellOffer
 
-ALLOWED_CURRENCIES = frozenset({"EUR", "USD", "USDT"})
+ALLOWED_CURRENCIES = frozenset({"EUR", "USD"})
 
 
 def currency_label_fa(code: str) -> str:
-    return {"EUR": "یورو", "USD": "دلار", "USDT": "تتر"}.get(code, code)
+    return {"EUR": "یورو", "USD": "دلار"}.get(code, code)
 
 
 async def count_public_sell_offers(

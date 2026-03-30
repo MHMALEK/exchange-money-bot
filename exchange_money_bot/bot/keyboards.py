@@ -2,7 +2,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from exchange_money_bot.config import settings
 
-# Callback for «بازگشت به منوی اصلی» — must match ConversationHandler fallback in sell_flow.
+# Callback for "back to main menu" — must match ConversationHandler fallback in sell_flow.
 MENU_MAIN_CALLBACK = "menu:main"
 
 
@@ -21,13 +21,12 @@ def with_back_to_main(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
 
 
 def buyer_currency_pick_keyboard() -> InlineKeyboardMarkup:
-    """قبل از فهرست خرید: انتخاب یورو / دلار / تتر."""
+    """Inline keyboard before buyer catalog: pick EUR or USD."""
     return with_back_to_main(
         InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("یورو (EUR)", callback_data="buy:ccy:EUR")],
                 [InlineKeyboardButton("دلار (USD)", callback_data="buy:ccy:USD")],
-                [InlineKeyboardButton("تتر (USDT)", callback_data="buy:ccy:USDT")],
             ]
         )
     )

@@ -35,7 +35,7 @@ class User(Base):
 
 
 class SellOffer(Base):
-    """آگهی فروش ارز؛ برای کوئری و شناسایی فروشنده."""
+    """Public sell listing row; used for catalog queries and seller identification."""
 
     __tablename__ = "sell_offers"
 

@@ -1,4 +1,4 @@
-"""تست منطق صفحه‌بندی فهرست خرید و الگوی callback (شامل USDT)."""
+"""Tests for buyer catalog pagination math and buy-flow callback regex (EUR/USD)."""
 
 from __future__ import annotations
 
@@ -7,20 +7,20 @@ import re
 import unittest
 
 
-_BUY_CCY = r"(USDT|EUR|USD)"
+_BUY_CCY = r"(EUR|USD)"
 BUY_FLOW_PATTERN = rf"^buy:(choose|ccy:{_BUY_CCY}|cat:{_BUY_CCY}:\d+)$"
 
 
 class TestBuyCallbackRegex(unittest.TestCase):
     def test_all_currency_buttons_match(self) -> None:
-        for ccy in ("EUR", "USD", "USDT"):
+        for ccy in ("EUR", "USD"):
             with self.subTest(ccy=ccy):
                 data = f"buy:ccy:{ccy}"
                 self.assertIsNotNone(re.match(BUY_FLOW_PATTERN, data), data)
                 self.assertIsNotNone(re.fullmatch(rf"buy:ccy:{_BUY_CCY}", data), data)
 
     def test_pagination_callbacks(self) -> None:
-        for ccy, page in [("USDT", 0), ("USD", 3), ("EUR", 99)]:
+        for ccy, page in [("USD", 3), ("EUR", 99)]:
             data = f"buy:cat:{ccy}:{page}"
             self.assertIsNotNone(re.match(BUY_FLOW_PATTERN, data), data)
             m = re.fullmatch(rf"buy:cat:{_BUY_CCY}:(\d+)", data)
@@ -29,11 +29,9 @@ class TestBuyCallbackRegex(unittest.TestCase):
             self.assertEqual(m.group(1), ccy)
             self.assertEqual(int(m.group(2)), page)
 
-    def test_usdt_not_matched_as_usd_only(self) -> None:
-        m = re.fullmatch(rf"buy:ccy:{_BUY_CCY}", "buy:ccy:USDT")
-        self.assertIsNotNone(m)
-        assert m is not None
-        self.assertEqual(m.group(1), "USDT")
+    def test_removed_currency_not_matched(self) -> None:
+        self.assertIsNone(re.fullmatch(rf"buy:ccy:{_BUY_CCY}", "buy:ccy:USDT"))
+        self.assertIsNone(re.match(BUY_FLOW_PATTERN, "buy:ccy:USDT"))
 
 
 class TestPaginationMath(unittest.TestCase):
@@ -45,7 +43,7 @@ class TestPaginationMath(unittest.TestCase):
 
     def test_total_pages(self) -> None:
         ps = 20
-        self.assertEqual(max(1, math.ceil(0 / ps)), 1)  # UI زودتر برمی‌گردد؛ فقط فرمول
+        self.assertEqual(max(1, math.ceil(0 / ps)), 1)  # UI short-circuits; this is formula-only
         self.assertEqual(max(1, math.ceil(3 / ps)), 1)
         self.assertEqual(max(1, math.ceil(20 / ps)), 1)
         self.assertEqual(max(1, math.ceil(21 / ps)), 2)

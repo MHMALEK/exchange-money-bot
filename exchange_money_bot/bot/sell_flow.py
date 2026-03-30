@@ -1,4 +1,4 @@
-"""چندمرحله‌ای فروش ارز (دکمهٔ اول منو)."""
+"""Multi-step sell flow (first main-menu path)."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _currency_label(code: str) -> str:
 
 
 def _parse_integer_amount(text: str) -> Optional[int]:
-    """فقط ارقام انگلیسی 0-9؛ فارسی/عربی و هر کاراکتر دیگر رد می‌شود."""
+    """ASCII digits 0-9 only; Persian/Arabic numerals and any other character are rejected."""
     s = text.strip()
     if not s or any(ch.isspace() for ch in s):
         return None
@@ -52,7 +52,6 @@ def _currency_keyboard() -> InlineKeyboardMarkup:
             [
                 [InlineKeyboardButton("یورو (EUR)", callback_data="sell:ccy:EUR")],
                 [InlineKeyboardButton("دلار (USD)", callback_data="sell:ccy:USD")],
-                [InlineKeyboardButton("تتر (USDT)", callback_data="sell:ccy:USDT")],
             ]
         )
     )
@@ -238,7 +237,7 @@ async def sell_conversation_cancel(update: Update, context: ContextTypes.DEFAULT
 
 
 async def sell_buy_flow_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """خروج از فرم فروش اگر کاربر حین گفتگو دکمهٔ خرید (انتخاب ارز / فهرست / صفحه) بزند."""
+    """End sell conversation when user taps buy flow (currency pick / catalog / page) mid-dialog."""
     query = update.callback_query
     if query is None or query.message is None or query.from_user is None:
         return ConversationHandler.END
@@ -270,7 +269,7 @@ def build_sell_conversation_handler() -> ConversationHandler:
     )
     buy_flow_handler = CallbackQueryHandler(
         sell_buy_flow_fallback,
-        pattern=r"^buy:(choose|ccy:(USDT|EUR|USD)|cat:(USDT|EUR|USD):\d+)$",
+        pattern=r"^buy:(choose|ccy:(EUR|USD)|cat:(EUR|USD):\d+)$",
     )
     return ConversationHandler(
         entry_points=[CallbackQueryHandler(sell_entry, pattern=r"^start:1$")],
@@ -281,7 +280,7 @@ def build_sell_conversation_handler() -> ConversationHandler:
             SELL_CURRENCY: [
                 CallbackQueryHandler(
                     sell_currency_chosen,
-                    pattern=r"^sell:ccy:(EUR|USD|USDT)$",
+                    pattern=r"^sell:ccy:(EUR|USD)$",
                 ),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, sell_currency_reminder),
             ],

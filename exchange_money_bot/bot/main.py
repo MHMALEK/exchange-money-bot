@@ -18,10 +18,31 @@ from exchange_money_bot.bot.sell_flow import build_sell_conversation_handler
 from exchange_money_bot.config import settings
 from exchange_money_bot.database import async_session_factory, init_db
 from exchange_money_bot.models import SellOffer
+from exchange_money_bot.services import irr_fiat_rates as irr_fiat_rates_service
 from exchange_money_bot.services import sell_offers as sell_offers_service
 from exchange_money_bot.services import users as user_service
 
 logger = logging.getLogger(__name__)
+
+
+async def _buyer_irr_rates_banner_html() -> str:
+    if not settings.buyer_show_irr_rates:
+        return ""
+    usd_url = settings.buyer_irr_rates_usd_json_url or irr_fiat_rates_service.DEFAULT_USD_JSON_URL
+    eur_url = settings.buyer_irr_rates_eur_json_url or irr_fiat_rates_service.DEFAULT_EUR_JSON_URL
+    usd_p, eur_p, ts = await irr_fiat_rates_service.get_usd_eur_rial_snapshot(
+        usd_json_url=usd_url,
+        eur_json_url=eur_url,
+        ttl_seconds=settings.buyer_irr_rates_ttl_seconds,
+    )
+    return irr_fiat_rates_service.format_buyer_rates_banner_html(usd_p, eur_p, ts)
+
+
+async def _prepend_irr_rates_to_buyer_html(body: str) -> str:
+    banner = await _buyer_irr_rates_banner_html()
+    if not banner:
+        return body
+    return banner + "\n\n" + body
 
 
 async def _edit_or_reply(
@@ -82,19 +103,19 @@ def _buy_cat_callback_data(currency: str, page_idx: int) -> str:
     return f"buy:cat:{currency}:{page_idx}"
 
 
-# USDT قبل از USD در گروه regex تا هیچ موتوری «USD» را روی پیشوند «USDT» قفل نکند.
-_BUY_CCY = r"(USDT|EUR|USD)"
+_BUY_CCY = r"(EUR|USD)"
 BUY_FLOW_CALLBACK_PATTERN = rf"^buy:(choose|ccy:{_BUY_CCY}|cat:{_BUY_CCY}:\d+)$"
 
 
 async def show_buy_currency_picker_message(query: CallbackQuery) -> None:
     if query.message is None:
         return
-    text = (
+    body = (
         "<b>خرید ارز</b>\n\n"
         "ابتدا ارزی را که می‌خواهید <b>بخرید</b> انتخاب کنید؛ "
         "بعد فقط همان آگهی‌ها را می‌بینید."
     )
+    text = await _prepend_irr_rates_to_buyer_html(body)
     await _edit_or_reply(
         query.message,
         text,
@@ -112,6 +133,7 @@ async def build_buyer_catalog_ui(
         raise ValueError(f"Invalid buyer catalog currency: {currency}")
     page_size = settings.buyer_catalog_page_size
     ccy_fa = sell_offers_service.currency_label_fa(currency)
+    irr_banner = await _buyer_irr_rates_banner_html()
 
     async with async_session_factory() as session:
         total = await sell_offers_service.count_public_sell_offers(
@@ -139,6 +161,8 @@ async def build_buyer_catalog_ui(
                     "فعلاً آگهی فروشی برای این ارز از دیگران در فهرست نیست.\n"
                     "ارز دیگری انتخاب کنید یا بعداً دوباره امتحان کنید."
                 )
+            if irr_banner:
+                text = irr_banner + "\n\n" + text
             kb = with_back_to_main(
                 InlineKeyboardMarkup(
                     [
@@ -163,13 +187,19 @@ async def build_buyer_catalog_ui(
             offset=offset,
         )
 
-    lines = [
-        "<b>فهرست فروشندگان</b>",
-        "",
-        f"ارز: <b>{html.escape(ccy_fa)}</b> ({html.escape(currency, quote=False)})",
-        "",
-        f"در مجموع <b>{total}</b> آگهی — صفحه <b>{page + 1}</b> از <b>{total_pages}</b>",
-    ]
+    lines: list[str] = []
+    if irr_banner:
+        lines.extend(irr_banner.split("\n"))
+        lines.append("")
+    lines.extend(
+        [
+            "<b>فهرست فروشندگان</b>",
+            "",
+            f"ارز: <b>{html.escape(ccy_fa)}</b> ({html.escape(currency, quote=False)})",
+            "",
+            f"در مجموع <b>{total}</b> آگهی — صفحه <b>{page + 1}</b> از <b>{total_pages}</b>",
+        ]
+    )
     rows: list[list[InlineKeyboardButton]] = []
     for i, o in enumerate(offers, start=offset + 1):
         ccy = sell_offers_service.currency_label_fa(o.currency)
@@ -312,13 +342,16 @@ REGISTERED_HOME_TEXT = (
 
 CONSENT_TEXT = (
     "برای استفاده از این ربات، آیا مایلید ثبت‌نام کنید؟\n\n"
-    "اگر بپذیرید، <b>نام نمایشی</b> و حداقل اطلاعات لازم از حساب تلگرام شما "
-    "(برای تمایز حساب در همین سرویس) ذخیره می‌شود؛ این اعداد و مشخصه‌ها در پیام‌های ربات به شما یا دیگران نشان داده نمی‌شود.\n\n"
+    "در صورت موافقت، <b>نام نمایشی</b> و حداقل اطلاعات لازم از حساب تلگرام شما "
+    "فقط برای شناسایی حساب در همین سرویس ذخیره می‌شود. "
+    "این اطلاعات در پیام‌های ربات به شما یا سایر کاربران نمایش داده نخواهد شد.\n\n"
     "این پروژه <b>رایگان</b> و <b>متن‌باز</b> است و صرفاً برای "
-    "<b>تسهیل تبادل ارز بین کاربران</b> طراحی شده است؛ "
-    "<b>کاربرد تجاری ندارد</b> و اطلاعات شما برای فروش تبلیغات یا استفادهٔ تجاری "
-    "استفاده نمی‌شود.\n\n"
-    "آیا موافقید ثبت‌نام شوید؟"
+    "تسهیل ارتباط و تبادل بین کاربران طراحی شده است. "
+    "اطلاعات شما برای تبلیغات، فروش یا استفادهٔ تجاری به کار نمی‌رود.\n\n"
+    "همچنین این ربات فقط یک واسط بین کاربران است و هیچ مسئولیتی در قبال قیمت‌ها، "
+    "انجام معامله، صحت اطلاعات کاربران، اعتبار طرفین، وریفای یا هرگونه ضمانت و خسارت احتمالی "
+    "نمی‌پذیرد. مسئولیت بررسی نهایی و انجام امن هرگونه تبادل بر عهدهٔ خود کاربران است.\n\n"
+    "آیا با ثبت‌نام موافقید؟"
 )
 
 
@@ -361,7 +394,7 @@ def delete_confirm_keyboard() -> InlineKeyboardMarkup:
 
 
 async def apply_home_screen(query) -> None:
-    """همان منوی اثرِ /start برای کاربر ثبت‌نام‌شده یا صفحهٔ رضایت برای مهمان."""
+    """Same outcome as /start: main menu for registered users or consent screen for guests."""
     if query.message is None or query.from_user is None:
         return
     tid = query.from_user.id
