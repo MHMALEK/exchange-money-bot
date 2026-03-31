@@ -72,3 +72,5 @@ jobs:
               --env-file "${{ env.VM_ENV_FILE_PATH }}" \
               -p 8000:8000 \
               "${{ env.IMAGE_NAME }}:latest"
+            # Drop untagged layers left after re-tagging :latest (frees disk on small VMs)
+            docker image prune -f
