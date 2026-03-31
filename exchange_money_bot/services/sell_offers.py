@@ -87,6 +87,11 @@ async def list_offers_for_user(session: AsyncSession, user_id: int) -> list[Sell
     return list(result.scalars().all())
 
 
+async def get_offer_by_id(session: AsyncSession, offer_id: int) -> Optional[SellOffer]:
+    result = await session.execute(select(SellOffer).where(SellOffer.id == offer_id))
+    return result.scalar_one_or_none()
+
+
 async def delete_offer_owned(
     session: AsyncSession, offer_id: int, user_id: int
 ) -> Optional[DeletedSellOfferSnapshot]:

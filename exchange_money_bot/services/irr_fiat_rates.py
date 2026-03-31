@@ -114,3 +114,20 @@ def format_buyer_rates_banner_html(
     if updated_ts:
         out += "\n<i>زمان ثبت در منبع: " + html.escape(updated_ts, quote=False) + "</i>"
     return out
+
+
+def rial_equivalent(
+    amount: int,
+    currency: str,
+    *,
+    usd_rial: Optional[int],
+    eur_rial: Optional[int],
+) -> Optional[int]:
+    """Approximate IRR for `amount` units of USD or EUR using per-unit rial prices."""
+    if amount <= 0:
+        return None
+    cur = currency.strip().upper()
+    rate = usd_rial if cur == "USD" else eur_rial if cur == "EUR" else None
+    if rate is None or rate <= 0:
+        return None
+    return amount * rate

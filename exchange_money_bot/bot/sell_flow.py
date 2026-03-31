@@ -32,6 +32,33 @@ logger = logging.getLogger(__name__)
 SELL_AMOUNT, SELL_CURRENCY, SELL_CONFIRM = range(3)
 
 
+async def _end_sell_if_not_member(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> Optional[int]:
+    """If the membership gate applies and the user left the channel, end the flow."""
+    u = update.effective_user
+    if u is None:
+        return ConversationHandler.END
+    if not settings.membership_gate_active():
+        return None
+    if await telegram_channel_service.user_passes_membership_gate(context.bot, u.id):
+        return None
+    join_kb = (
+        await telegram_channel_service.join_channel_keyboard_async(context.bot)
+        or InlineKeyboardMarkup([])
+    )
+    markup = with_back_to_main(join_kb)
+    text = t("membership.sell_gate_html")
+    if update.message:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+    elif update.callback_query and update.callback_query.message:
+        await update.callback_query.message.reply_text(
+            text, parse_mode="HTML", reply_markup=markup
+        )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
 def _currency_label(code: str) -> str:
     return f"{sell_offers_service.currency_label_fa(code)} ({code})"
 
@@ -86,13 +113,14 @@ async def sell_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await telegram_channel_service.user_passes_membership_gate(
         context.bot, query.from_user.id
     ):
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(context.bot)
+            or InlineKeyboardMarkup([])
+        )
         await query.message.reply_text(
             t("membership.sell_gate_html"),
             parse_mode="HTML",
-            reply_markup=with_back_to_main(
-                telegram_channel_service.join_channel_keyboard()
-                or InlineKeyboardMarkup([])
-            ),
+            reply_markup=with_back_to_main(join_kb),
         )
         return ConversationHandler.END
     context.user_data.pop("sell_amount", None)
@@ -105,6 +133,9 @@ async def sell_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def sell_receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    end = await _end_sell_if_not_member(update, context)
+    if end is not None:
+        return end
     if update.message is None:
         return SELL_AMOUNT
     text = update.message.text or ""
@@ -124,6 +155,9 @@ async def sell_receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def sell_currency_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    end = await _end_sell_if_not_member(update, context)
+    if end is not None:
+        return end
     if update.message:
         await update.message.reply_text(
             t("sell.currency_reminder"),
@@ -136,6 +170,10 @@ async def sell_currency_chosen(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     if query is None or query.message is None or query.data is None or query.from_user is None:
         return ConversationHandler.END
+    end = await _end_sell_if_not_member(update, context)
+    if end is not None:
+        await query.answer()
+        return end
     await query.answer()
     parts = query.data.split(":")
     if len(parts) != 3 or parts[0] != "sell" or parts[1] != "ccy":
@@ -170,6 +208,9 @@ async def sell_currency_chosen(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def sell_confirm_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    end = await _end_sell_if_not_member(update, context)
+    if end is not None:
+        return end
     if update.message:
         await update.message.reply_text(
             t("sell.confirm_reminder"),
@@ -182,6 +223,10 @@ async def sell_submit_or_abort(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     if query is None or query.message is None or query.data is None or query.from_user is None:
         return ConversationHandler.END
+    end = await _end_sell_if_not_member(update, context)
+    if end is not None:
+        await query.answer()
+        return end
     await query.answer()
     if query.data == "sell:abort":
         context.user_data.clear()

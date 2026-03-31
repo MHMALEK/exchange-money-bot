@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -59,3 +59,12 @@ class SellOffer(Base):
     """Telegram message_id in the public listings channel, if posted."""
 
     user: Mapped["User"] = relationship(back_populates="sell_offers")
+
+
+class BotKv(Base):
+    """Small key-value store for bot-owned ids (e.g. pinned channel message)."""
+
+    __tablename__ = "bot_kv"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

@@ -1,3 +1,4 @@
+import asyncio
 import html
 import logging
 import re
@@ -12,10 +13,12 @@ from exchange_money_bot.bot.keyboards import (
     main_menu_keyboard,
     with_back_to_main,
 )
+from exchange_money_bot.bot.rates_flow import build_rates_conversation_handler
 from exchange_money_bot.bot.sell_flow import build_sell_conversation_handler
 from exchange_money_bot.config import settings
 from exchange_money_bot.database import async_session_factory, init_db
 from exchange_money_bot.i18n import t
+from exchange_money_bot.services import irr_fiat_rates
 from exchange_money_bot.services import sell_offers as sell_offers_service
 from exchange_money_bot.services import telegram_channel as telegram_channel_service
 from exchange_money_bot.services import users as user_service
@@ -50,9 +53,9 @@ _BUY_CCY = r"(EUR|USD)"
 BUY_FLOW_CALLBACK_PATTERN = rf"^buy:(choose|ccy:{_BUY_CCY}|cat:{_BUY_CCY}:\d+)$"
 
 
-def _listings_channel_cta_keyboard() -> InlineKeyboardMarkup:
+async def _listings_channel_cta_keyboard_async(bot: Bot) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    open_url = settings.effective_listings_channel_open_url()
+    open_url = await telegram_channel_service.resolve_listings_channel_open_url(bot)
     if open_url:
         rows.append(
             [
@@ -65,15 +68,15 @@ def _listings_channel_cta_keyboard() -> InlineKeyboardMarkup:
     return with_back_to_main(InlineKeyboardMarkup(rows))
 
 
-def _listings_channel_message_body(*, for_rial: bool) -> str:
+async def _listings_channel_message_body_async(bot: Bot, *, for_rial: bool) -> str:
     base = t("listings.cta_rial_html") if for_rial else t("listings.cta_html")
-    open_url = settings.effective_listings_channel_open_url()
+    open_url = await telegram_channel_service.resolve_listings_channel_open_url(bot)
     if open_url:
         url_esc = html.escape(open_url, quote=True)
         label_esc = html.escape(t("listings.channel_link_label"), quote=False)
         return f'{base}\n\n<a href="{url_esc}">{label_esc}</a>'
     if settings.telegram_listings_channel_id:
-        return f"{base}\n\n{t('listings.cta_configure_invite_hint_html')}"
+        return f"{base}\n\n{t('listings.cta_no_direct_link_html')}"
     return base
 
 
@@ -94,7 +97,10 @@ async def execute_buy_flow_callback(query: CallbackQuery, bot: Bot) -> None:
         )
         return
     if not await telegram_channel_service.user_passes_membership_gate(bot, tid):
-        join_kb = telegram_channel_service.join_channel_keyboard() or InlineKeyboardMarkup([])
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(bot)
+            or InlineKeyboardMarkup([])
+        )
         await _edit_or_reply(
             query.message,
             t("membership.required_html"),
@@ -104,8 +110,8 @@ async def execute_buy_flow_callback(query: CallbackQuery, bot: Bot) -> None:
         return
     await _edit_or_reply(
         query.message,
-        _listings_channel_message_body(for_rial=False),
-        reply_markup=_listings_channel_cta_keyboard(),
+        await _listings_channel_message_body_async(bot, for_rial=False),
+        reply_markup=await _listings_channel_cta_keyboard_async(bot),
         parse_mode="HTML",
     )
 
@@ -115,6 +121,111 @@ async def buy_flow_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if query is None:
         return
     await execute_buy_flow_callback(query, context.bot)
+
+
+async def listing_rial_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Channel listing: approximate IRR for the offer amount (alert only, no chat state)."""
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    m = re.fullmatch(r"rial:(\d+)", query.data)
+    if not m:
+        return
+    offer_id = int(m.group(1))
+    async with async_session_factory() as session:
+        offer = await sell_offers_service.get_offer_by_id(session, offer_id)
+    if offer is None:
+        await query.answer(t("rates.listing_rial_gone"), show_alert=True)
+        return
+    try:
+        usd, eur, _ts = await irr_fiat_rates.get_usd_eur_rial_snapshot(
+            usd_json_url=settings.irr_usd_json_url or irr_fiat_rates.DEFAULT_USD_JSON_URL,
+            eur_json_url=settings.irr_eur_json_url or irr_fiat_rates.DEFAULT_EUR_JSON_URL,
+            ttl_seconds=settings.irr_rates_ttl_seconds,
+        )
+    except Exception:
+        logger.exception("listing rial snapshot failed")
+        usd, eur = None, None
+    total = irr_fiat_rates.rial_equivalent(
+        offer.amount,
+        offer.currency,
+        usd_rial=usd if isinstance(usd, int) else None,
+        eur_rial=eur if isinstance(eur, int) else None,
+    )
+    if total is None:
+        await query.answer(t("rates.listing_rial_no_rate"), show_alert=True)
+        return
+    rate = usd if offer.currency == "USD" else eur
+    ccy_fa = sell_offers_service.currency_label_fa(offer.currency)
+    msg = t(
+        "rates.listing_rial_alert",
+        amount=offer.amount,
+        ccy_fa=ccy_fa,
+        code=offer.currency,
+        rate=rate,
+        total=total,
+    )
+    if len(msg) > 640:
+        msg = msg[:637] + "…"
+    await query.answer(msg, show_alert=True)
+
+
+async def rates_spot_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Live USD/EUR per-unit rial (same copy as the pinned channel post when enabled)."""
+    query = update.callback_query
+    if query is None or query.message is None or query.from_user is None:
+        return
+    await query.answer()
+    tid = query.from_user.id
+    async with async_session_factory() as session:
+        reg = await user_service.get_user_by_telegram(session, tid)
+    if reg is None:
+        await _edit_or_reply(
+            query.message,
+            t("error.register_first"),
+            reply_markup=with_back_to_main(InlineKeyboardMarkup([])),
+        )
+        return
+    if not await telegram_channel_service.user_passes_membership_gate(context.bot, tid):
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(context.bot)
+            or InlineKeyboardMarkup([])
+        )
+        await _edit_or_reply(
+            query.message,
+            t("membership.required_html"),
+            reply_markup=with_back_to_main(join_kb),
+            parse_mode="HTML",
+        )
+        return
+    try:
+        usd, eur, ts = await irr_fiat_rates.get_usd_eur_rial_snapshot(
+            usd_json_url=settings.irr_usd_json_url or irr_fiat_rates.DEFAULT_USD_JSON_URL,
+            eur_json_url=settings.irr_eur_json_url or irr_fiat_rates.DEFAULT_EUR_JSON_URL,
+            ttl_seconds=settings.irr_rates_ttl_seconds,
+        )
+    except Exception:
+        logger.exception("rates spot snapshot failed")
+        usd, eur, ts = None, None, None
+    banner = irr_fiat_rates.format_buyer_rates_banner_html(usd, eur, ts)
+    if not banner:
+        await _edit_or_reply(
+            query.message,
+            t("rates.unavailable_html"),
+            parse_mode="HTML",
+            reply_markup=with_back_to_main(InlineKeyboardMarkup([])),
+        )
+        return
+    await _edit_or_reply(
+        query.message,
+        banner + "\n\n" + t("rates.spot_footer_html"),
+        parse_mode="HTML",
+        reply_markup=with_back_to_main(InlineKeyboardMarkup([])),
+    )
 
 
 def consent_keyboard() -> InlineKeyboardMarkup:
@@ -161,7 +272,10 @@ async def apply_home_screen(query, bot: Bot) -> None:
         return
     tid = query.from_user.id
     if not await telegram_channel_service.user_passes_membership_gate(bot, tid):
-        join_kb = telegram_channel_service.join_channel_keyboard() or InlineKeyboardMarkup([])
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(bot)
+            or InlineKeyboardMarkup([])
+        )
         await _edit_or_reply(
             query.message,
             t("membership.required_html"),
@@ -245,25 +359,17 @@ async def build_my_offers_ui(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
             rows.append(
                 [
                     InlineKeyboardButton(
-                        t("offers.delete_btn", amount=o.amount, ccy=ccy),
+                        t("offers.btn_remove"),
                         callback_data=f"offer:del:{o.id}",
-                    )
+                    ),
+                    InlineKeyboardButton(
+                        t("offers.btn_sold"),
+                        callback_data=f"offer:sold:{o.id}",
+                    ),
                 ]
             )
-    lines.extend(
-        [
-            "",
-            t("account.delete_footer"),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                t("account.delete_all_btn"),
-                callback_data="account:delete",
-            )
-        ]
-    )
+    if offers:
+        lines.extend(["", t("offers.relist_hint_html")])
     return "\n".join(lines), with_back_to_main(InlineKeyboardMarkup(rows))
 
 
@@ -276,7 +382,10 @@ async def account_manage_callback(
     await query.answer()
     tid = query.from_user.id
     if not await telegram_channel_service.user_passes_membership_gate(context.bot, tid):
-        join_kb = telegram_channel_service.join_channel_keyboard() or InlineKeyboardMarkup([])
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(context.bot)
+            or InlineKeyboardMarkup([])
+        )
         await _edit_or_reply(
             query.message,
             t("membership.required_html"),
@@ -302,9 +411,10 @@ async def account_manage_callback(
     )
 
 
-async def offer_delete_callback(
+async def offer_action_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
+    """Close an offer: remove from DB and strikethrough channel post (delete vs sold wording)."""
     query = update.callback_query
     if (
         query is None
@@ -313,10 +423,11 @@ async def offer_delete_callback(
         or query.from_user is None
     ):
         return
-    m = re.fullmatch(r"offer:del:(\d+)", query.data)
+    m = re.fullmatch(r"offer:(del|sold):(\d+)", query.data)
     if not m:
         return
-    offer_id = int(m.group(1))
+    action = m.group(1)
+    offer_id = int(m.group(2))
     tid = query.from_user.id
     if not await telegram_channel_service.user_passes_membership_gate(context.bot, tid):
         await query.answer(t("error.join_channel_first"), show_alert=True)
@@ -332,12 +443,18 @@ async def offer_delete_callback(
         if snap is None:
             await query.answer(t("error.offer_not_yours"), show_alert=True)
             return
+    note_key = (
+        "listing.sold_note" if action == "sold" else "listing.closed_note"
+    )
     await telegram_channel_service.mark_listing_closed_on_channel(
         context.bot,
         message_id=snap.listings_channel_message_id,
         offer=snap,
+        closed_note_key=note_key,
     )
-    await query.answer(t("success.offer_deleted"))
+    await query.answer(
+        t("success.offer_sold" if action == "sold" else "success.offer_deleted")
+    )
     text, keyboard = await build_my_offers_ui(db_user.id)
     await _edit_or_reply(
         query.message,
@@ -363,7 +480,10 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     u = update.effective_user
     if not await telegram_channel_service.user_passes_membership_gate(context.bot, u.id):
-        join_kb = telegram_channel_service.join_channel_keyboard() or InlineKeyboardMarkup([])
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(context.bot)
+            or InlineKeyboardMarkup([])
+        )
         await update.message.reply_text(
             t("membership.required_html"),
             reply_markup=with_back_to_main(join_kb),
@@ -411,7 +531,10 @@ async def consent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not await telegram_channel_service.user_passes_membership_gate(
         context.bot, u.id
     ):
-        join_kb = telegram_channel_service.join_channel_keyboard() or InlineKeyboardMarkup([])
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(context.bot)
+            or InlineKeyboardMarkup([])
+        )
         await _edit_or_reply(
             query.message,
             t("membership.required_html"),
@@ -436,7 +559,7 @@ async def consent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def start_menu_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Listings channel CTA (start:2 and start:rial — buyer / view list)."""
+    """Listings channel CTA (start:rial from menu; start:2 optional for old keyboards)."""
     query = update.callback_query
     if query is None or query.data is None or query.message is None or query.from_user is None:
         return
@@ -452,7 +575,10 @@ async def start_menu_callback(
         )
         return
     if not await telegram_channel_service.user_passes_membership_gate(context.bot, tid):
-        join_kb = telegram_channel_service.join_channel_keyboard() or InlineKeyboardMarkup([])
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(context.bot)
+            or InlineKeyboardMarkup([])
+        )
         await _edit_or_reply(
             query.message,
             t("membership.required_html"),
@@ -463,8 +589,8 @@ async def start_menu_callback(
     for_rial = query.data == "start:rial"
     await _edit_or_reply(
         query.message,
-        _listings_channel_message_body(for_rial=for_rial),
-        reply_markup=_listings_channel_cta_keyboard(),
+        await _listings_channel_message_body_async(context.bot, for_rial=for_rial),
+        reply_markup=await _listings_channel_cta_keyboard_async(context.bot),
         parse_mode="HTML",
     )
 
@@ -484,7 +610,10 @@ async def account_delete_callback(
     tid = query.from_user.id
     if not await telegram_channel_service.user_passes_membership_gate(context.bot, tid):
         await query.answer()
-        join_kb = telegram_channel_service.join_channel_keyboard() or InlineKeyboardMarkup([])
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(context.bot)
+            or InlineKeyboardMarkup([])
+        )
         await _edit_or_reply(
             query.message,
             t("membership.required_html"),
@@ -536,7 +665,10 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     tid = update.effective_user.id
     if not await telegram_channel_service.user_passes_membership_gate(context.bot, tid):
-        join_kb = telegram_channel_service.join_channel_keyboard() or InlineKeyboardMarkup([])
+        join_kb = (
+            await telegram_channel_service.join_channel_keyboard_async(context.bot)
+            or InlineKeyboardMarkup([])
+        )
         await update.message.reply_text(
             t("membership.required_html"),
             reply_markup=with_back_to_main(join_kb),
@@ -550,8 +682,23 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(t("account.nothing_stored"))
 
 
+async def _channel_rates_pin_loop(application: Application) -> None:
+    await asyncio.sleep(20)
+    while True:
+        try:
+            await telegram_channel_service.refresh_channel_pinned_rates(application.bot)
+        except Exception:
+            logger.exception("channel_rates_pin_loop iteration failed")
+        await asyncio.sleep(max(120, int(settings.irr_channel_pin_interval_seconds)))
+
+
 async def on_post_init(application: Application) -> None:
     await init_db()
+    if settings.irr_channel_pin_enabled and (settings.telegram_listings_channel_id or "").strip():
+        application.create_task(
+            _channel_rates_pin_loop(application),
+            name="channel_rates_pin_loop",
+        )
 
 
 def main() -> None:
@@ -574,10 +721,16 @@ def main() -> None:
         CallbackQueryHandler(consent_callback, pattern=r"^consent:(yes|no)$")
     )
     application.add_handler(
+        CallbackQueryHandler(rates_spot_callback, pattern=r"^rates:spot$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(listing_rial_callback, pattern=r"^rial:\d+$")
+    )
+    application.add_handler(
         CallbackQueryHandler(account_manage_callback, pattern=r"^account:manage$")
     )
     application.add_handler(
-        CallbackQueryHandler(offer_delete_callback, pattern=r"^offer:del:\d+$")
+        CallbackQueryHandler(offer_action_callback, pattern=r"^offer:(del|sold):\d+$")
     )
     application.add_handler(
         CallbackQueryHandler(
@@ -586,6 +739,7 @@ def main() -> None:
         )
     )
     application.add_handler(build_sell_conversation_handler())
+    application.add_handler(build_rates_conversation_handler())
     application.add_handler(
         CallbackQueryHandler(menu_main_callback, pattern=rf"^{MENU_MAIN_CALLBACK}$")
     )
