@@ -7,7 +7,7 @@ STRINGS: dict[str, str] = {
     # Main menu & navigation
     "keyboard.back_main": "بازگشت به منوی اصلی",
     "keyboard.menu_rial": "مشاهده آگهی‌ها",
-    "keyboard.menu_fx": "ثبت آگهی فروش ارز",
+    "keyboard.menu_fx": "ثبت آگهی برای فروش یورو/دلار",
     "keyboard.menu_spot_rates": "قیمت لحظه‌ای دلار و یورو (ریال)",
     "keyboard.menu_rates": "محاسبهٔ معادل ریالی",
     "keyboard.menu_my_offers": "مدیریت آگهی‌های من (حذف)",
