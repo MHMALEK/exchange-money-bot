@@ -53,5 +53,9 @@ class SellOffer(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    listings_channel_message_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True, index=True
+    )
+    """Telegram message_id in the public listings channel, if posted."""
 
     user: Mapped["User"] = relationship(back_populates="sell_offers")

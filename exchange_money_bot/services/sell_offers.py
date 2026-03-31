@@ -1,15 +1,29 @@
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exchange_money_bot.i18n import t
 from exchange_money_bot.models import SellOffer
 
 ALLOWED_CURRENCIES = frozenset({"EUR", "USD"})
 
 
+@dataclass
+class DeletedSellOfferSnapshot:
+    """Row fields needed after an offer row is removed (e.g. channel strikethrough)."""
+
+    amount: int
+    currency: str
+    seller_display_name: str
+    telegram_username: Optional[str]
+    telegram_id: int
+    listings_channel_message_id: Optional[int]
+
+
 def currency_label_fa(code: str) -> str:
-    return {"EUR": "یورو", "USD": "دلار"}.get(code, code)
+    return t(f"currency.{code}", default=code)
 
 
 async def count_public_sell_offers(
@@ -73,16 +87,37 @@ async def list_offers_for_user(session: AsyncSession, user_id: int) -> list[Sell
     return list(result.scalars().all())
 
 
-async def delete_offer_owned(session: AsyncSession, offer_id: int, user_id: int) -> bool:
+async def delete_offer_owned(
+    session: AsyncSession, offer_id: int, user_id: int
+) -> Optional[DeletedSellOfferSnapshot]:
     result = await session.execute(
         select(SellOffer).where(SellOffer.id == offer_id, SellOffer.user_id == user_id)
     )
     row = result.scalar_one_or_none()
     if row is None:
-        return False
+        return None
+    snap = DeletedSellOfferSnapshot(
+        amount=row.amount,
+        currency=row.currency,
+        seller_display_name=row.seller_display_name,
+        telegram_username=row.telegram_username,
+        telegram_id=row.telegram_id,
+        listings_channel_message_id=row.listings_channel_message_id,
+    )
     await session.delete(row)
     await session.commit()
-    return True
+    return snap
+
+
+async def set_listings_channel_message_id(
+    session: AsyncSession, offer_id: int, message_id: int
+) -> None:
+    result = await session.execute(select(SellOffer).where(SellOffer.id == offer_id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        return
+    row.listings_channel_message_id = message_id
+    await session.commit()
 
 
 async def create_sell_offer(
