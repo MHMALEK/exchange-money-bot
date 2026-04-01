@@ -1,11 +1,7 @@
 # Build, push to GHCR (public), deploy to Oracle VM over SSH.
 #
-# Secrets → Settings → Secrets and variables → Actions:
-#   VM_HOST, VM_USER, VM_SSH_KEY
-#   TELEGRAM_BOT_TOKEN, DATABASE_URL, TELEGRAM_LISTINGS_CHANNEL_ID
-#
-# Env vars are passed through the SSH session into `docker run -e NAME` (no secrets
-# embedded in the script text, so URLs and special characters stay safe).
+# GitHub Actions secrets/variables and Docker env mapping: README.md → section "Deploy".
+# Env vars pass through SSH into `docker run -e NAME` (values not embedded in script).
 #
 # After first push: Packages → image → Package settings → Change visibility → Public
 #
@@ -57,23 +53,38 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TELEGRAM_LISTINGS_CHANNEL_ID: ${{ secrets.TELEGRAM_LISTINGS_CHANNEL_ID }}
+          TELEGRAM_MEMBERSHIP_CHANNEL_ID: ${{ secrets.TELEGRAM_MEMBERSHIP_CHANNEL_ID }}
+          TELEGRAM_MEMBERSHIP_GROUP_ID: ${{ secrets.TELEGRAM_MEMBERSHIP_GROUP_ID }}
+          TELEGRAM_CHANNEL_INVITE_URL: ${{ secrets.TELEGRAM_CHANNEL_INVITE_URL }}
+          TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL: ${{ secrets.TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL }}
+          TELEGRAM_DISABLE_MEMBERSHIP_GATE: ${{ vars.TELEGRAM_DISABLE_MEMBERSHIP_GATE }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          IRR_RATES_TTL_SECONDS: ${{ vars.IRR_RATES_TTL_SECONDS }}
+          IRR_USD_JSON_URL: ${{ vars.IRR_USD_JSON_URL }}
+          IRR_EUR_JSON_URL: ${{ vars.IRR_EUR_JSON_URL }}
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          envs: TELEGRAM_BOT_TOKEN,DATABASE_URL,TELEGRAM_LISTINGS_CHANNEL_ID
+          envs: TELEGRAM_BOT_TOKEN,DATABASE_URL,TELEGRAM_LISTINGS_CHANNEL_ID,TELEGRAM_MEMBERSHIP_CHANNEL_ID,TELEGRAM_MEMBERSHIP_GROUP_ID,TELEGRAM_CHANNEL_INVITE_URL,TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL,TELEGRAM_DISABLE_MEMBERSHIP_GATE,API_BASE_URL,IRR_RATES_TTL_SECONDS,IRR_USD_JSON_URL,IRR_EUR_JSON_URL
           script_stop: true
           script: |
             set -e
             for v in TELEGRAM_BOT_TOKEN DATABASE_URL TELEGRAM_LISTINGS_CHANNEL_ID; do
               eval "val=\$$v"
               if [ -z "$val" ]; then
-                echo "$v secret must be set"
+                echo "$v must be set (GitHub Actions secret)"
                 exit 1
               fi
             done
             E="-e TELEGRAM_BOT_TOKEN -e DATABASE_URL -e TELEGRAM_LISTINGS_CHANNEL_ID"
+            for v in TELEGRAM_MEMBERSHIP_CHANNEL_ID TELEGRAM_MEMBERSHIP_GROUP_ID TELEGRAM_CHANNEL_INVITE_URL TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL TELEGRAM_DISABLE_MEMBERSHIP_GATE API_BASE_URL IRR_RATES_TTL_SECONDS IRR_USD_JSON_URL IRR_EUR_JSON_URL; do
+              eval "val=\$$v"
+              if [ -n "$val" ]; then
+                E="$E -e $v"
+              fi
+            done
             docker pull "${{ env.IMAGE_NAME }}:latest"
             docker stop exchange-money-bot 2>/dev/null || true
             docker rm exchange-money-bot 2>/dev/null || true

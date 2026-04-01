@@ -34,7 +34,26 @@ Tests: `pytest`
 
 ### Deploy
 
-The repo includes a **Dockerfile** and a **GitHub Actions** workflow that builds, pushes to **GHCR**, and can **SSH‑deploy** to a small VPS. Secrets and env vars live in GitHub; see `.github/workflows/deploy.yml` for the list.
+The repo includes a **Dockerfile** and a **GitHub Actions** workflow (`.github/workflows/deploy.yml`) that builds, pushes to **GHCR**, and **SSH‑deploys** to a VPS. The workflow runs `docker run` with `-e` so values are not interpolated into the shell script
+
+#### Required (Secrets)
+
+| Name | Purpose |
+|------|---------|
+| `VM_HOST`, `VM_USER`, `VM_SSH_KEY` | SSH into the deployment server |
+| `TELEGRAM_BOT_TOKEN` | Bot token from BotFather |
+| `DATABASE_URL` | Async SQLAlchemy URL (e.g. Postgres); includes credentials |
+| `TELEGRAM_LISTINGS_CHANNEL_ID` | Channel where listings are posted (`@username` or `-100…`); bot must be admin |
+
+#### Optional (Secrets)
+
+Omit any you do not use; they are only passed into the container when non‑empty.
+
+| Name | Purpose |
+|------|---------|
+| `TELEGRAM_MEMBERSHIP_CHANNEL_ID` | Different channel for membership checks only (rare); defaults to listings channel when unset |
+| `TELEGRAM_MEMBERSHIP_GROUP_ID` | Optional group/supergroup; with a channel id, user passes if member of **either** (OR) |
+
 
 ---
 
