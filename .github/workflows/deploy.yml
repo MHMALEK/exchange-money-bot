@@ -71,24 +71,28 @@ jobs:
           script_stop: true
           script: |
             set -e
-            for v in TELEGRAM_BOT_TOKEN DATABASE_URL; do
-              eval "val=\$$v"
-              if [ -z "$val" ]; then
-                echo "$v must be set (GitHub Actions secret)"
-                exit 1
-              fi
-            done
-            if [ -z "${TELEGRAM_LISTINGS_CHANNEL_ID:-}" ] && [ -z "${TELEGRAM_MEMBERSHIP_CHANNEL_ID:-}" ]; then
-              echo "Set TELEGRAM_LISTINGS_CHANNEL_ID and/or TELEGRAM_MEMBERSHIP_CHANNEL_ID"
+            if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+              echo "TELEGRAM_BOT_TOKEN must be set (GitHub Actions secret)"
               exit 1
             fi
-            E="-e TELEGRAM_BOT_TOKEN -e DATABASE_URL -e TELEGRAM_LISTINGS_CHANNEL_ID -e TELEGRAM_MEMBERSHIP_CHANNEL_ID"
-            for v in TELEGRAM_MEMBERSHIP_GROUP_ID TELEGRAM_CHANNEL_INVITE_URL TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL TELEGRAM_DISABLE_MEMBERSHIP_GATE API_BASE_URL IRR_RATES_TTL_SECONDS IRR_USD_JSON_URL IRR_EUR_JSON_URL; do
-              eval "val=\$$v"
-              if [ -n "$val" ]; then
-                E="$E -e $v"
-              fi
-            done
+            if [ -z "${DATABASE_URL:-}" ]; then
+              echo "DATABASE_URL must be set (GitHub Actions secret)"
+              exit 1
+            fi
+            if [ -z "${TELEGRAM_LISTINGS_CHANNEL_ID:-}" ]; then
+              echo "TELEGRAM_LISTINGS_CHANNEL_ID must be set (required for listings)"
+              exit 1
+            fi
+            E="-e TELEGRAM_BOT_TOKEN -e DATABASE_URL -e TELEGRAM_LISTINGS_CHANNEL_ID"
+            [ -n "${TELEGRAM_MEMBERSHIP_CHANNEL_ID:-}" ] && E="$E -e TELEGRAM_MEMBERSHIP_CHANNEL_ID"
+            [ -n "${TELEGRAM_MEMBERSHIP_GROUP_ID:-}" ] && E="$E -e TELEGRAM_MEMBERSHIP_GROUP_ID"
+            [ -n "${TELEGRAM_CHANNEL_INVITE_URL:-}" ] && E="$E -e TELEGRAM_CHANNEL_INVITE_URL"
+            [ -n "${TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL:-}" ] && E="$E -e TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL"
+            [ -n "${TELEGRAM_DISABLE_MEMBERSHIP_GATE:-}" ] && E="$E -e TELEGRAM_DISABLE_MEMBERSHIP_GATE"
+            [ -n "${API_BASE_URL:-}" ] && E="$E -e API_BASE_URL"
+            [ -n "${IRR_RATES_TTL_SECONDS:-}" ] && E="$E -e IRR_RATES_TTL_SECONDS"
+            [ -n "${IRR_USD_JSON_URL:-}" ] && E="$E -e IRR_USD_JSON_URL"
+            [ -n "${IRR_EUR_JSON_URL:-}" ] && E="$E -e IRR_EUR_JSON_URL"
             docker pull "${{ env.IMAGE_NAME }}:latest"
             docker stop exchange-money-bot 2>/dev/null || true
             docker rm exchange-money-bot 2>/dev/null || true

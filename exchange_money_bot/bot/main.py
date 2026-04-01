@@ -704,6 +704,10 @@ def main() -> None:
     )
     if not settings.telegram_bot_token:
         raise SystemExit("TELEGRAM_BOT_TOKEN is not set (see .env.example)")
+    if not settings.effective_listings_channel_id():
+        raise SystemExit(
+            "TELEGRAM_LISTINGS_CHANNEL_ID is required (listings channel; see .env.example)"
+        )
 
     application = (
         Application.builder()

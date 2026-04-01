@@ -10,7 +10,7 @@ It does **not** move money, hold funds, or vet counterparties. You’re always r
 
 - **Sign‑up / consent** flow in Persian  
 - **Sell flow**: post an amount in EUR or USD; optional publish to a **listings channel** (bot must be admin there)  
-- **Buy / browse** helpers and **channel membership** gate when configured  
+- **Buy / browse** helpers and optional **auth** (Telegram channel and/or group) when configured  
 - Small **FastAPI** app alongside the bot (e.g. for integrations); **SQLite** or **Postgres** via `DATABASE_URL`
 
 ---
@@ -43,25 +43,25 @@ The repo includes a **Dockerfile** and a **GitHub Actions** workflow (`.github/w
 | `VM_HOST`, `VM_USER`, `VM_SSH_KEY` | SSH into the deployment server |
 | `TELEGRAM_BOT_TOKEN` | Bot token from BotFather |
 | `DATABASE_URL` | Async SQLAlchemy URL (e.g. Postgres); includes credentials |
-| **One channel id** | Set `TELEGRAM_LISTINGS_CHANNEL_ID` and/or `TELEGRAM_MEMBERSHIP_CHANNEL_ID` (see below). The deploy script requires at least one to be non‑empty. |
+| `TELEGRAM_LISTINGS_CHANNEL_ID` | **Required.** Channel where listings are posted; bot must be admin. Also used for the «open channel» / listings CTA. |
 
-**Channel ids — how they interact**
+**Auth (optional)** — unrelated to where listings are posted:
 
-- **`TELEGRAM_LISTINGS_CHANNEL_ID`** — Where sell offers are posted and where the «open channel» / listings CTA should point when a public URL can be resolved.
-- **`TELEGRAM_MEMBERSHIP_CHANNEL_ID`** — If set, membership is checked against this chat **instead of** the listings channel. If **`TELEGRAM_LISTINGS_CHANNEL_ID` is unset**, the membership channel id is also used to **post listings** and to resolve the open link (single‑channel setup).
-- Setting **only** `TELEGRAM_MEMBERSHIP_CHANNEL_ID` does **not** change the listings target when `TELEGRAM_LISTINGS_CHANNEL_ID` is already set (they are different chats in that case). The bot message link is always for the **listings** channel.
-
+- **`TELEGRAM_MEMBERSHIP_CHANNEL_ID`** — If set, users must be members of this channel when the gate is on.
+- **`TELEGRAM_MEMBERSHIP_GROUP_ID`** — If set, users must be members of this group when the gate is on.
+- **Both set** → user must satisfy **both** (channel **and** group).
+- **Neither set** → no membership gate. In dev you can also set variable `TELEGRAM_DISABLE_MEMBERSHIP_GATE=true` to skip auth even when ids are set.
 
 #### Optional (Secrets)
 
-Omit any you do not use; optional ones are only passed into the container when non‑empty (except the two channel ids, which are always passed through and may be empty if the other is set).
+Passed into the container only when non‑empty (see `deploy.yml`).
 
 | Name | Purpose |
 |------|---------|
-| `TELEGRAM_MEMBERSHIP_CHANNEL_ID` | Override which channel is used for the membership gate; see table above |
-| `TELEGRAM_MEMBERSHIP_GROUP_ID` | Optional group/supergroup; with a channel id, user passes if member of **either** (OR) |
-| `TELEGRAM_CHANNEL_INVITE_URL` | Join/open link for the **listings** side of the bot (required for a clear button when the channel is private) |
-| `TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL` | Invite link for the membership group button |
+| `TELEGRAM_MEMBERSHIP_CHANNEL_ID` | Auth channel (optional) |
+| `TELEGRAM_MEMBERSHIP_GROUP_ID` | Auth group/supergroup (optional) |
+| `TELEGRAM_CHANNEL_INVITE_URL` | Listings channel join/open link (helps when the channel is private) |
+| `TELEGRAM_MEMBERSHIP_GROUP_INVITE_URL` | Invite link for the auth group button |
 
 #### Optional (Variables)
 
