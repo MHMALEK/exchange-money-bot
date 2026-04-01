@@ -19,11 +19,17 @@ class Settings(BaseSettings):
     telegram_membership_channel_id: Optional[str] = None
     """Optional override for membership checks; defaults to listings channel when unset."""
 
+    telegram_membership_group_id: Optional[str] = None
+    """Optional group or supergroup chat id (@username or -100…). Bot must be able to get_chat_member. Used with channel id as OR: user passes if member of any configured chat."""
+
     telegram_disable_membership_gate: bool = False
-    """If True, skip channel membership checks (local/dev only). When False, a configured listings or membership channel id enables the gate."""
+    """If True, skip membership checks (local/dev only). When False, a configured group id and/or channel id (see effective_*) enables the gate."""
 
     telegram_channel_invite_url: Optional[str] = None
     """https://t.me/… link shown on «join channel» and «open listings» prompts."""
+
+    telegram_membership_group_invite_url: Optional[str] = None
+    """Optional invite link for the membership group when «join group» is shown."""
 
     irr_rates_ttl_seconds: int = 300
     """Cache TTL for USD/EUR→rial JSON snapshots (see irr_fiat_rates)."""
@@ -37,10 +43,16 @@ class Settings(BaseSettings):
     def effective_membership_channel_id(self) -> Optional[str]:
         return self.telegram_membership_channel_id or self.telegram_listings_channel_id
 
+    def effective_membership_group_id(self) -> Optional[str]:
+        s = (self.telegram_membership_group_id or "").strip()
+        return s or None
+
     def membership_gate_active(self) -> bool:
         if self.telegram_disable_membership_gate:
             return False
-        return bool(self.effective_membership_channel_id())
+        return bool(self.effective_membership_group_id()) or bool(
+            self.effective_membership_channel_id()
+        )
 
     def effective_listings_channel_open_url(self) -> Optional[str]:
         """Public URL for «open channel» buttons: invite link, else https://t.me/name if id is @name."""

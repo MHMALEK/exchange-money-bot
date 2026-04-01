@@ -13,15 +13,17 @@ STRINGS: dict[str, str] = {
     "keyboard.menu_delete_account": "حذف اکانت",
     # Membership & channel
     "membership.required_html": (
-        "<b>عضویت در کانال الزامی است</b>\n\n"
-        "برای استفاده از این ربات باید ابتدا عضو کانال شوید. "
+        "<b>عضویت الزامی است</b>\n\n"
+        "برای استفاده از این ربات باید عضو کانال یا گروه اعلام‌شده توسط مدیر باشید "
+        "(اگر هر دو تنظیم شده باشند، عضویت در یکی کافی است). "
         "بعد از عضویت، دوباره /start را بزنید."
     ),
     "membership.sell_gate_html": (
-        "<b>عضویت در کانال الزامی است</b>\n\n"
-        "برای ثبت آگهی فروش باید ابتدا عضو کانال شوید. سپس دوباره از منو اقدام کنید."
+        "<b>عضویت الزامی است</b>\n\n"
+        "برای ثبت آگهی فروش باید عضو کانال یا گروه مربوطه باشید. سپس دوباره از منو اقدام کنید."
     ),
     "channel.btn_join": "ورود به کانال",
+    "group.btn_join": "ورود به گروه",
     "channel.btn_open": "مشاهدهٔ کانال",
     # Live TGJU-based USD/EUR → rial (spot button + channel listing callback)
     "rates.unavailable_html": (
@@ -98,7 +100,7 @@ STRINGS: dict[str, str] = {
     # Errors & prompts
     "error.register_first": "برای استفاده از این گزینه‌ها ابتدا با /start ثبت‌نام کنید.",
     "error.register_first_short": "ابتدا با /start ثبت‌نام کنید.",
-    "error.join_channel_first": "ابتدا عضو کانال شوید.",
+    "error.join_channel_first": "ابتدا عضو کانال یا گروه شوید.",
     "error.register_alert": "ابتدا ثبت‌نام کنید.",
     "error.offer_not_yours": "این آگهی مال شما نیست یا قبلاً حذف شده.",
     "error.offer_save": "ذخیره نشد. دوباره تلاش کنید.",

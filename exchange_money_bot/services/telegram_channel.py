@@ -1,7 +1,8 @@
-"""Post sell listings to a Telegram channel and enforce optional channel membership."""
+"""Post sell listings to a Telegram channel and enforce optional chat membership (group and/or channel)."""
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 from typing import Optional, Protocol, Sequence
@@ -134,30 +135,71 @@ async def resolve_listings_channel_open_url(bot: Bot) -> Optional[str]:
     return None
 
 
-async def join_channel_keyboard_async(bot: Bot) -> Optional[InlineKeyboardMarkup]:
-    url = await resolve_listings_channel_open_url(bot)
-    if not url:
+async def resolve_membership_group_open_url(bot: Bot) -> Optional[str]:
+    """Invite URL, t.me from @id, or from get_chat for numeric supergroup ids."""
+    direct = (settings.telegram_membership_group_invite_url or "").strip()
+    if direct:
+        return direct
+    gid = settings.effective_membership_group_id()
+    if not gid:
         return None
-    return InlineKeyboardMarkup([[InlineKeyboardButton(t("channel.btn_join"), url=url)]])
-
-
-async def user_is_channel_member(
-    bot: Bot, user_id: int, channel_chat_id: str
-) -> bool:
+    if gid.startswith("@"):
+        u = gid[1:].strip()
+        if u:
+            return f"https://t.me/{u}"
     try:
-        m = await bot.get_chat_member(chat_id=channel_chat_id, user_id=user_id)
+        chat = await bot.get_chat(chat_id=gid)
+        link = getattr(chat, "invite_link", None)
+        if link:
+            return link
+        uname = getattr(chat, "username", None)
+        if uname and str(uname).strip():
+            return f"https://t.me/{str(uname).strip().lstrip('@')}"
+    except TelegramError as e:
+        logger.debug("resolve_membership_group_open_url get_chat failed: %s", e)
+    return None
+
+
+async def join_channel_keyboard_async(bot: Bot) -> Optional[InlineKeyboardMarkup]:
+    rows: list[list[InlineKeyboardButton]] = []
+    if settings.effective_membership_channel_id():
+        url = await resolve_listings_channel_open_url(bot)
+        if url:
+            rows.append([InlineKeyboardButton(t("channel.btn_join"), url=url)])
+    if settings.effective_membership_group_id():
+        gurl = await resolve_membership_group_open_url(bot)
+        if gurl:
+            rows.append([InlineKeyboardButton(t("group.btn_join"), url=gurl)])
+    if not rows:
+        return None
+    return InlineKeyboardMarkup(rows)
+
+
+async def user_is_chat_member(bot: Bot, user_id: int, chat_id: str) -> bool:
+    try:
+        m = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
         return m.status in _MEMBER_OK
     except TelegramError as e:
-        logger.warning("get_chat_member failed user_id=%s chat=%s: %s", user_id, channel_chat_id, e)
+        logger.warning("get_chat_member failed user_id=%s chat=%s: %s", user_id, chat_id, e)
         return False
 
 
 async def user_passes_membership_gate(bot: Bot, user_id: int) -> bool:
     if not settings.membership_gate_active():
         return True
+    gid = settings.effective_membership_group_id()
     cid = settings.effective_membership_channel_id()
-    assert cid is not None
-    return await user_is_channel_member(bot, user_id, cid)
+    if gid and cid:
+        in_group, in_channel = await asyncio.gather(
+            user_is_chat_member(bot, user_id, gid),
+            user_is_chat_member(bot, user_id, cid),
+        )
+        return in_group or in_channel
+    if gid:
+        return await user_is_chat_member(bot, user_id, gid)
+    if cid:
+        return await user_is_chat_member(bot, user_id, cid)
+    return True
 
 
 async def post_offer_to_listings_channel(bot: Bot, offer: _ListingDisplay) -> Optional[int]:

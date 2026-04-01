@@ -37,7 +37,7 @@ MAX_DESCRIPTION_LEN = sell_offers_service.MAX_OFFER_DESCRIPTION_LEN
 async def _end_sell_if_not_member(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> Optional[int]:
-    """If the membership gate applies and the user left the channel, end the flow."""
+    """If the membership gate applies and the user no longer passes (group/channel), end the flow."""
     u = update.effective_user
     if u is None:
         return ConversationHandler.END
