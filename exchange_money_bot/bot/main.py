@@ -12,6 +12,7 @@ from exchange_money_bot.bot.keyboards import (
     main_menu_keyboard,
     with_back_to_main,
 )
+from exchange_money_bot.bot.edit_flow import build_edit_conversation_handler
 from exchange_money_bot.bot.sell_flow import build_sell_conversation_handler
 from exchange_money_bot.config import settings
 from exchange_money_bot.database import async_session_factory, init_db
@@ -411,6 +412,14 @@ async def build_my_offers_ui(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
                     ),
                 ]
             )
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        t("offers.btn_edit_i", i=i),
+                        callback_data=f"offer:edit:{o.id}",
+                    ),
+                ]
+            )
     if offers:
         lines.extend(["", t("offers.relist_hint_html")])
     return "\n".join(lines), with_back_to_main(InlineKeyboardMarkup(rows))
@@ -771,6 +780,7 @@ def main() -> None:
         )
     )
     application.add_handler(build_sell_conversation_handler())
+    application.add_handler(build_edit_conversation_handler())
     application.add_handler(
         CallbackQueryHandler(menu_main_callback, pattern=rf"^{MENU_MAIN_CALLBACK}$")
     )

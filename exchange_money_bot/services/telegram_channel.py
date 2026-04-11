@@ -263,6 +263,43 @@ async def post_offer_to_listings_channel(bot: Bot, offer: _ListingDisplay) -> Op
         return None
 
 
+async def refresh_or_repost_listing(bot: Bot, offer: _ListingDisplay) -> Optional[int]:
+    """Update the channel message in place when possible; otherwise post a new listing."""
+    cid = settings.effective_listings_channel_id()
+    if not cid:
+        return getattr(offer, "listings_channel_message_id", None)
+    text = format_listing_html(offer, closed=False)
+    kb = listing_contact_keyboard(offer)
+    mid = getattr(offer, "listings_channel_message_id", None)
+    if mid is not None:
+        try:
+            await bot.edit_message_text(
+                chat_id=cid,
+                message_id=int(mid),
+                text=text,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+            return int(mid)
+        except TelegramError:
+            logger.warning(
+                "Could not edit listing message_id=%s (will try new post)",
+                mid,
+            )
+    try:
+        msg = await bot.send_message(
+            chat_id=cid,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+        return int(msg.message_id)
+    except TelegramError:
+        oid = getattr(offer, "id", "?")
+        logger.exception("Failed to repost listing offer_id=%s", oid)
+        return None
+
+
 async def mark_listing_closed_on_channel(
     bot: Optional[Bot],
     *,

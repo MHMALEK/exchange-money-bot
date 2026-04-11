@@ -224,3 +224,39 @@ async def create_sell_offer(
     await session.commit()
     await session.refresh(offer)
     return offer
+
+
+async def update_sell_offer_owned(
+    session: AsyncSession,
+    offer_id: int,
+    user_id: int,
+    *,
+    amount: int,
+    currency: str,
+    description: Optional[str],
+    payment_methods: Optional[Sequence[str]],
+    telegram_username: Optional[str],
+    seller_display_name: str,
+) -> Optional[SellOffer]:
+    """Update an offer row if it belongs to user_id. Listing direction is unchanged."""
+    result = await session.execute(
+        select(SellOffer).where(SellOffer.id == offer_id, SellOffer.user_id == user_id)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    if currency not in ALLOWED_CURRENCIES:
+        raise ValueError(f"Invalid currency: {currency}")
+    if amount <= 0:
+        raise ValueError("Amount must be positive")
+    desc = normalize_offer_description(description)
+    methods = normalize_payment_methods(payment_methods)
+    row.amount = amount
+    row.currency = currency
+    row.description = desc
+    row.payment_methods = methods
+    row.telegram_username = telegram_username
+    row.seller_display_name = seller_display_name
+    await session.commit()
+    await session.refresh(row)
+    return row
