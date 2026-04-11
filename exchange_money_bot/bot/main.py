@@ -25,6 +25,182 @@ from exchange_money_bot.services.sell_offers import DeletedSellOfferSnapshot
 
 logger = logging.getLogger(__name__)
 
+# user_data key: list of message_ids for the "my offers" view (header + one message per ad)
+MY_OFFERS_MESSAGE_IDS_KEY = "my_offers_message_ids"
+OFFERS_BACK_CALLBACK = "offers:back"
+
+
+async def _delete_messages_best_effort(bot: Bot, chat_id: int, message_ids: list[int]) -> None:
+    for mid in message_ids:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            logger.debug("delete_message failed chat_id=%s message_id=%s", chat_id, mid, exc_info=True)
+
+
+def _format_offer_card_html(i: int, o) -> str:
+    ld = getattr(o, "listing_direction", None) or sell_offers_service.DEFAULT_LISTING_DIRECTION
+    kind_prefix = (
+        t("offers.kind_rial_to_fx")
+        if ld == sell_offers_service.LISTING_RIAL_TO_FX
+        else t("offers.kind_fx_to_rial")
+    )
+    ccy = sell_offers_service.currency_label_fa(o.currency)
+    dt = (
+        o.created_at.strftime("%Y-%m-%d %H:%M")
+        if o.created_at is not None
+        else t("sell.display_fallback")
+    )
+    desc_suffix = ""
+    if o.description and str(o.description).strip():
+        snippet = html.escape(str(o.description).strip()[:72], quote=False)
+        if len(str(o.description).strip()) > 72:
+            snippet += "…"
+        desc_suffix = t("offers.desc_line_html", snippet=snippet)
+    pay_suffix = ""
+    pm = o.payment_methods
+    if pm:
+        ordered = [c for c in sell_offers_service.PAYMENT_METHOD_CODES_ORDER if c in pm]
+        if ordered:
+            pay_suffix = t(
+                "offers.payment_line_html",
+                methods=html.escape(
+                    sell_offers_service.format_payment_methods_summary_fa(pm),
+                    quote=False,
+                ),
+            )
+    line_key = (
+        "offers.line_html_rial_to_fx"
+        if ld == sell_offers_service.LISTING_RIAL_TO_FX
+        else "offers.line_html_fx_to_rial"
+    )
+    return t(
+        line_key,
+        i=i,
+        kind_prefix=kind_prefix,
+        amount=o.amount,
+        ccy=ccy,
+        dt=dt,
+        desc_suffix=desc_suffix,
+        pay_suffix=pay_suffix,
+    )
+
+
+def _my_offers_header_text(*, has_offers: bool) -> str:
+    parts: list[str] = [t("offers.title_html"), ""]
+    if not has_offers:
+        parts.append(t("offers.empty"))
+    else:
+        parts.append(t("offers.relist_hint_html"))
+    return "\n".join(parts)
+
+
+def _my_offers_header_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    t("keyboard.back_main"),
+                    callback_data=OFFERS_BACK_CALLBACK,
+                )
+            ]
+        ]
+    )
+
+
+def _my_offers_offer_keyboard(i: int, offer_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    t("offers.btn_remove_i", i=i),
+                    callback_data=f"offer:del:{offer_id}",
+                ),
+                InlineKeyboardButton(
+                    t("offers.btn_sold_i", i=i),
+                    callback_data=f"offer:sold:{offer_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    t("offers.btn_edit_i", i=i),
+                    callback_data=f"offer:edit:{offer_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    t("keyboard.back_main"),
+                    callback_data=OFFERS_BACK_CALLBACK,
+                )
+            ],
+        ]
+    )
+
+
+async def _send_my_offers_view(
+    bot: Bot,
+    chat_id: int,
+    user_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    anchor_message,
+) -> None:
+    """Edit anchor to header, send one message per offer; store message ids in user_data."""
+    old_ids = context.user_data.pop(MY_OFFERS_MESSAGE_IDS_KEY, None)
+    if old_ids:
+        await _delete_messages_best_effort(bot, chat_id, old_ids)
+    async with async_session_factory() as session:
+        offers = await sell_offers_service.list_offers_for_user(session, user_id)
+    header = _my_offers_header_text(has_offers=bool(offers))
+    await anchor_message.edit_text(
+        header,
+        reply_markup=_my_offers_header_keyboard(),
+        parse_mode="HTML",
+    )
+    header_mid = anchor_message.message_id
+    ids: list[int] = [header_mid]
+    for i, o in enumerate(offers, start=1):
+        card = _format_offer_card_html(i, o)
+        sent = await bot.send_message(
+            chat_id,
+            card,
+            reply_markup=_my_offers_offer_keyboard(i, o.id),
+            parse_mode="HTML",
+        )
+        ids.append(sent.message_id)
+    context.user_data[MY_OFFERS_MESSAGE_IDS_KEY] = ids
+
+
+async def _refresh_my_offers_after_offer_change(
+    bot: Bot,
+    chat_id: int,
+    user_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Delete the previous multi-message view and post a fresh header + cards."""
+    ids = context.user_data.pop(MY_OFFERS_MESSAGE_IDS_KEY, None) or []
+    await _delete_messages_best_effort(bot, chat_id, ids)
+    async with async_session_factory() as session:
+        offers = await sell_offers_service.list_offers_for_user(session, user_id)
+    header = _my_offers_header_text(has_offers=bool(offers))
+    msg = await bot.send_message(
+        chat_id,
+        header,
+        reply_markup=_my_offers_header_keyboard(),
+        parse_mode="HTML",
+    )
+    new_ids: list[int] = [msg.message_id]
+    for i, o in enumerate(offers, start=1):
+        card = _format_offer_card_html(i, o)
+        sent = await bot.send_message(
+            chat_id,
+            card,
+            reply_markup=_my_offers_offer_keyboard(i, o.id),
+            parse_mode="HTML",
+        )
+        new_ids.append(sent.message_id)
+    context.user_data[MY_OFFERS_MESSAGE_IDS_KEY] = new_ids
+
 
 async def _edit_or_reply(
     message,
@@ -342,87 +518,21 @@ async def delete_user_data(telegram_id: int, bot: Optional[Bot] = None) -> bool:
         return await user_service.delete_user_by_telegram(session, telegram_id)
 
 
-async def build_my_offers_ui(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    async with async_session_factory() as session:
-        offers = await sell_offers_service.list_offers_for_user(session, user_id)
-    lines = [t("offers.title_html"), ""]
-    rows: list[list[InlineKeyboardButton]] = []
-    if not offers:
-        lines.append(t("offers.empty"))
-    else:
-        for i, o in enumerate(offers, start=1):
-            ld = getattr(o, "listing_direction", None) or sell_offers_service.DEFAULT_LISTING_DIRECTION
-            kind_prefix = (
-                t("offers.kind_rial_to_fx")
-                if ld == sell_offers_service.LISTING_RIAL_TO_FX
-                else t("offers.kind_fx_to_rial")
-            )
-            ccy = sell_offers_service.currency_label_fa(o.currency)
-            dt = (
-                o.created_at.strftime("%Y-%m-%d %H:%M")
-                if o.created_at is not None
-                else t("sell.display_fallback")
-            )
-            desc_suffix = ""
-            if o.description and str(o.description).strip():
-                snippet = html.escape(str(o.description).strip()[:72], quote=False)
-                if len(str(o.description).strip()) > 72:
-                    snippet += "…"
-                desc_suffix = t("offers.desc_line_html", snippet=snippet)
-            pay_suffix = ""
-            pm = o.payment_methods
-            if pm:
-                ordered = [
-                    c for c in sell_offers_service.PAYMENT_METHOD_CODES_ORDER if c in pm
-                ]
-                if ordered:
-                    pay_suffix = t(
-                        "offers.payment_line_html",
-                        methods=html.escape(
-                            sell_offers_service.format_payment_methods_summary_fa(pm),
-                            quote=False,
-                        ),
-                    )
-            line_key = (
-                "offers.line_html_rial_to_fx"
-                if ld == sell_offers_service.LISTING_RIAL_TO_FX
-                else "offers.line_html_fx_to_rial"
-            )
-            lines.append(
-                t(
-                    line_key,
-                    i=i,
-                    kind_prefix=kind_prefix,
-                    amount=o.amount,
-                    ccy=ccy,
-                    dt=dt,
-                    desc_suffix=desc_suffix,
-                    pay_suffix=pay_suffix,
-                )
-            )
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        t("offers.btn_remove_i", i=i),
-                        callback_data=f"offer:del:{o.id}",
-                    ),
-                    InlineKeyboardButton(
-                        t("offers.btn_sold_i", i=i),
-                        callback_data=f"offer:sold:{o.id}",
-                    ),
-                ]
-            )
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        t("offers.btn_edit_i", i=i),
-                        callback_data=f"offer:edit:{o.id}",
-                    ),
-                ]
-            )
-    if offers:
-        lines.extend(["", t("offers.relist_hint_html")])
-    return "\n".join(lines), with_back_to_main(InlineKeyboardMarkup(rows))
+async def offers_back_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Remove the other messages in the my-offers view, then show the main menu on this chat."""
+    query = update.callback_query
+    if query is None or query.message is None or query.from_user is None:
+        return
+    await query.answer()
+    ids = context.user_data.pop(MY_OFFERS_MESSAGE_IDS_KEY, None) or []
+    chat_id = query.message.chat_id
+    cur = query.message.message_id
+    for mid in ids:
+        if mid != cur:
+            await _delete_messages_best_effort(context.bot, chat_id, [mid])
+    await apply_home_screen(query, context.bot)
 
 
 async def account_manage_callback(
@@ -454,12 +564,12 @@ async def account_manage_callback(
             reply_markup=with_back_to_main(InlineKeyboardMarkup([])),
         )
         return
-    text, keyboard = await build_my_offers_ui(db_user.id)
-    await _edit_or_reply(
-        query.message,
-        text,
-        reply_markup=keyboard,
-        parse_mode="HTML",
+    await _send_my_offers_view(
+        context.bot,
+        query.message.chat_id,
+        db_user.id,
+        context,
+        anchor_message=query.message,
     )
 
 
@@ -507,12 +617,11 @@ async def offer_action_callback(
     await query.answer(
         t("success.offer_sold" if action == "sold" else "success.offer_deleted")
     )
-    text, keyboard = await build_my_offers_ui(db_user.id)
-    await _edit_or_reply(
-        query.message,
-        text,
-        reply_markup=keyboard,
-        parse_mode="HTML",
+    await _refresh_my_offers_after_offer_change(
+        context.bot,
+        query.message.chat_id,
+        db_user.id,
+        context,
     )
 
 
@@ -766,6 +875,9 @@ def main() -> None:
     )
     application.add_handler(
         CallbackQueryHandler(listing_rial_callback, pattern=r"^rial:\d+$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(offers_back_callback, pattern=r"^offers:back$")
     )
     application.add_handler(
         CallbackQueryHandler(account_manage_callback, pattern=r"^account:manage$")
